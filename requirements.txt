@@ -1,0 +1,10 @@
+audioread==2.1.8
+certifi==2019.9.11
+chardet==3.0.4
+fuzzywuzzy==0.17.0
+idna==2.8
+pyacoustid==1.1.7
+python-dotenv==0.10.3
+python-Levenshtein==0.12.0
+requests==2.22.0
+urllib3==1.25.6
