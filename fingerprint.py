@@ -8,14 +8,14 @@ from fuzzywuzzy import fuzz, process
 from dotenv import load_dotenv
 
 load_dotenv()
-API_KEY = os.getenv("API_KEY")
+ACOUSTID_API_KEY = os.getenv("ACOUSTID_API_KEY")
 
 mp3file = sys.argv[1]
 if not os.path.isfile(mp3file):
 	print(f'ERROR: the mp3 audio file "{mp3file}" does not exist')
 	sys.exit(1)
 
-response = acoustid.match(API_KEY, mp3file, parse=False)
+response = acoustid.match(ACOUSTID_API_KEY, mp3file, parse=False)
 
 matches = {}
 for result in response['results']:
