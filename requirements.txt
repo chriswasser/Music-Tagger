@@ -8,6 +8,7 @@ fuzzywuzzy==0.17.0
 google-api-python-client==1.7.11
 google-auth==1.6.3
 google-auth-httplib2==0.0.3
+google-images-download==2.8.0
 Google-Images-Search==1.0.1
 httplib2==0.14.0
 idna==2.8
@@ -21,6 +22,7 @@ python-Levenshtein==0.12.0
 python-resize-image==1.1.19
 requests==2.22.0
 rsa==4.0
+selenium==3.141.0
 six==1.12.0
 termcolor==1.1.0
 uritemplate==3.0.0
