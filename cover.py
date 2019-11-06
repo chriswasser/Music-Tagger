@@ -3,31 +3,26 @@
 import os
 import sys
 
-from dotenv import load_dotenv
-from google_images_search import GoogleImagesSearch
+from google_images_download import google_images_download
 
-load_dotenv()
-GOOGLE_PROJECT_BASED_API_KEY = os.getenv('GOOGLE_PROJECT_BASED_API_KEY')
-GOOGLE_CUSTOM_SEARCH_ENGINE_ID = os.getenv('GOOGLE_CUSTOM_SEARCH_ENGINE_ID')
+response = google_images_download.googleimagesdownload()
 
-query = sys.argv[1]
-
-google_images = GoogleImagesSearch(GOOGLE_PROJECT_BASED_API_KEY, GOOGLE_CUSTOM_SEARCH_ENGINE_ID)
-
-parameters = {
-	'q': query,
-	'num': 10,
+arguments = {
+	'keywords': sys.argv[1],
+	'limit': 10,
+	'output_directory': 'covers',
+	'no_directory': True,
 }
-google_images.search(search_params=parameters)
+paths, num_errors = response.download(arguments)
 
-for num, image in enumerate(google_images.results()):
-	image.download('covers')
-	
-	old_path = os.path.abspath(image.path)
+if num_errors > 0:
+	print(f'WARNING: during cover download {num_errors} errors occurred')
+
+for num, image in enumerate(list(paths.values())[0]):
+	old_path = os.path.abspath(image)
 	new_path = os.path.join(os.path.dirname(old_path), f'cover-{num}{os.path.splitext(old_path)[1]}')
 	os.rename(old_path, new_path)
 
 	print(f'cover {num}')
 	print(f'--> {new_path}')
-	print(f'--> {image.url}')
 
