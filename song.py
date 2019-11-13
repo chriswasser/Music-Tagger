@@ -31,7 +31,7 @@ def download_mp3file(url):
 		try:
 			youtube_dl.main(argv=[
 				'--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0', # store best audio as mp3
-				'--output', '%(title)s.%(ext)s', url, # set filename to video title
+				url, '--output', '%(title)s.%(ext)s', # set filename to video title
 			])
 		except SystemExit:
 			# prevent youtube_dl's sys.exit call from stopping execution
@@ -86,7 +86,7 @@ def fingerprint_mp3file(mp3file):
 
 			matches[Song(artist, title, album)] = result['score'] * 100
 	if not matches:
-		return None, False
+		return Song(None, None, None), False
 
 	mp3name = os.path.basename(os.path.abspath(mp3file))
 	song, filename_score = process.extractOne(
@@ -105,8 +105,9 @@ def ask_user(mp3file, song):
 	return song
 
 def rename_mp3file(mp3file, song):
-	# TODO: acutally perform renaming
-	return mp3file
+	new_file = f'{song.artist} - {song.title}.mp3'
+	os.rename(mp3file, os.path.join(os.path.dirname(mp3file), new_file))
+	return new_file
 
 def write_mp3tags(mp3file, song):
 	pass
@@ -114,9 +115,9 @@ def write_mp3tags(mp3file, song):
 def normalize_mp3file(mp3file):
 	# pass custom arguments to ffmpeg_normalize's main
 	with main_arguments(argv=[
-			'ffmpeg-normalize', mp3file, # first argument is always the program name
-			'-c:a', 'libmp3lame', '-b:a', '320k', # read and write an mp3file
-			'-f', '-o', mp3file, # perform inplace normalization
+			'ffmpeg-normalize', # first argument is always the program name
+			'--audio-codec', 'libmp3lame', '--audio-bitrate', '320k', # read and write an mp3file
+			mp3file, '--force', '--output', mp3file, # perform inplace normalization
 		]):
 		ffmpeg_normalize_main()
 
