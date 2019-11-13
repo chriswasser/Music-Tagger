@@ -1,8 +1,15 @@
+audioread==2.1.8
+certifi==2019.9.11
+chardet==3.0.4
 ffmpeg-normalize==1.15.3
 fuzzywuzzy==0.17.0
 google-images-download==2.8.0
+idna==2.8
 mutagen==1.42.0
+pyacoustid==1.1.7
 python-dotenv==0.10.3
+python-Levenshtein==0.12.0
+requests==2.22.0
 selenium==3.141.0
 tqdm==4.38.0
 urllib3==1.25.6

@@ -3,12 +3,20 @@
 import collections
 import contextlib
 import io
+import os
 import sys
 
+import acoustid
+import dotenv
 import ffmpeg_normalize
+from ffmpeg_normalize.__main__ import main as ffmpeg_normalize_main
+from fuzzywuzzy import fuzz, process
 import youtube_dl
 
 Song = collections.namedtuple(typename='Song', field_names=['artist', 'title', 'album'])
+
+dotenv.load_dotenv()
+ACOUSTID_API_KEY = os.getenv("ACOUSTID_API_KEY")
 
 @contextlib.contextmanager
 def main_arguments(argv=None):
@@ -35,14 +43,70 @@ def download_mp3file(url):
 	mp3file = ' '.join(line.split()[2:])
 	return mp3file
 
+def parse_artist(json):
+	artist_joined = ''
+	for artist in json['artists']:
+		artist_joined += artist['name']
+		if 'joinphrase' in artist:
+			artist_joined += artist['joinphrase']
+	return artist_joined
+
 def fingerprint_mp3file(mp3file):
-	pass
+	response = acoustid.match(ACOUSTID_API_KEY, mp3file, parse=False, meta='recordings releasegroups')
+
+	matches = {}
+	for result in response['results']:
+		if 'recordings' not in result:
+			continue
+		for recording in result['recordings']:
+			if 'artists' not in recording:
+				continue
+			artist = parse_artist(recording)
+
+			if 'title' not in recording:
+				continue
+			title = recording['title']
+
+			album = None
+			if 'releasegroups' in recording:
+				for releasegroup in recording['releasegroups']:
+					album_artist = parse_artist(releasegroup)
+
+					if album_artist == artist:
+						# ignore compilations
+						if 'secondarytypes' in releasegroup:
+							continue
+						# prefer entries of type album over everything
+						if releasegroup['type'] == 'Album':
+							album = releasegroup['title']
+							break
+						# if we do not find any entry of type album, settle for an entry of type single
+						if not album and releasegroup['type'] == 'Single':
+							album = releasegroup['title']
+
+			matches[Song(artist, title, album)] = result['score'] * 100
+	if not matches:
+		return None, False
+
+	mp3name = os.path.basename(os.path.abspath(mp3file))
+	song, filename_score = process.extractOne(
+		mp3name, choices=list(matches.keys()),
+		processor=lambda song: f'{song.artist} - {song.title}' if type(song) != str else song,
+		scorer=fuzz.token_set_ratio
+	)
+	mp3audio_score = matches[song]
+	confident = filename_score < 70 or mp3audio_score < 40
+	
+	return song, confident
 
 def ask_user(mp3file, song):
-	pass
+	# TODO: query user if is fine with the current artist, title and album choice
+	# TODO: query for manual selection of artist, title and album
+	return song
 
 def rename_mp3file(mp3file, song):
-	pass
+	# TODO: acutally perform renaming
+	return mp3file
 
 def write_mp3tags(mp3file, song):
 	pass
@@ -50,10 +114,11 @@ def write_mp3tags(mp3file, song):
 def normalize_mp3file(mp3file):
 	# pass custom arguments to ffmpeg_normalize's main
 	with main_arguments(argv=[
+			'ffmpeg-normalize', mp3file, # first argument is always the program name
 			'-c:a', 'libmp3lame', '-b:a', '320k', # read and write an mp3file
-			'-f', '-o', mp3file, mp3file, # perform inplace normalization
+			'-f', '-o', mp3file, # perform inplace normalization
 		]):
-		ffmpeg_normalize.main()
+		ffmpeg_normalize_main()
 
 def modify_mp3file(mp3file, song):
 	mp3file = rename_mp3file(mp3file, song)
