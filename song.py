@@ -12,12 +12,14 @@ import acoustid
 import dotenv
 import ffmpeg_normalize
 from ffmpeg_normalize.__main__ import main as ffmpeg_normalize_main
-from fuzzywuzzy import fuzz, process
+from fuzzywuzzy import fuzz
 from google_images_download import google_images_download
 from mutagen.id3 import ID3, TPE1, TIT2, TALB, APIC
 import youtube_dl
 
 Song = collections.namedtuple(typename='Song', field_names=['artist', 'title', 'album'])
+Score = collections.namedtuple(typename='Score', field_names=['audio', 'filename', 'album'])
+Match = collections.namedtuple(typename='Match', field_names=['song', 'score'])
 
 dotenv.load_dotenv()
 ACOUSTID_API_KEY = os.getenv("ACOUSTID_API_KEY")
@@ -64,9 +66,12 @@ def parse_artist(json):
 
 def fingerprint_mp3file(mp3file):
 	response = acoustid.match(ACOUSTID_API_KEY, mp3file, parse=False, meta='recordings releasegroups')
+	mp3name = os.path.basename(os.path.abspath(mp3file))
 
-	matches = {}
+	matches = [Match(Song('', '', ''), Score(0, 0, 0))]
 	for result in response['results']:
+		audio_score = result['score'] * 100
+
 		if 'recordings' not in result:
 			continue
 		for recording in result['recordings']:
@@ -78,42 +83,33 @@ def fingerprint_mp3file(mp3file):
 				continue
 			title = recording['title']
 
-			album = None
+			filename_score = fuzz.token_set_ratio(mp3name, f'{artist} - {title}')
+
+			album, album_score = '', 0
 			if 'releasegroups' in recording:
-				for releasegroup in recording['releasegroups']:
-					album_artist = parse_artist(releasegroup)
+				for release in recording['releasegroups']:
+					same_artist = parse_artist(release) == artist
 
-					if album_artist == artist:
-						# TODO: change handling of Singles and Albums as well as suboptimal albums, e.g. use score
-						# - different artist: 25
-						# - compilation: 50
-						# - single: 75
-						# - album: 100
-						# TODO: prevent None album values due to mp3tagging error
-						# ignore compilations
-						if 'secondarytypes' in releasegroup:
-							continue
-						# prefer entries of type album over everything
-						if releasegroup['type'] == 'Album':
-							album = releasegroup['title']
-							break
-						# if we do not find any entry of type album, settle for an entry of type single
-						if not album and releasegroup['type'] == 'Single':
-							album = releasegroup['title']
+					is_mix = not same_artist and release['type'] == 'Album'
+					is_compilation = same_artist and release['type'] == 'Album'
+					is_single = same_artist and release['type'] == 'Single'
+					is_album = same_artist and release['type'] == 'Album' and 'secondarytypes' not in release
 
-			matches[Song(artist, title, album)] = result['score'] * 100
-	if not matches:
-		return Song(None, None, None), False
+					if album_score < 25 and is_mix:
+						album, album_score = release['title'], 25
+					if album_score < 50 and is_compilation:
+						album, album_score = release['title'], 50
+					if album_score < 75 and is_single:
+						album, album_score = release['title'], 75
+					if album_score < 100 and is_album:
+						album, album_score = release['title'], 100
 
-	mp3name = os.path.basename(os.path.abspath(mp3file))
-	song, filename_score = process.extractOne(
-		mp3name, choices=list(matches.keys()),
-		processor=lambda song: f'{song.artist} - {song.title}' if type(song) != str else song,
-		scorer=fuzz.token_set_ratio
-	)
-	mp3audio_score = matches[song]
-	confident = filename_score >= 70 or mp3audio_score >= 40
+			song = Song(artist, title, album)
+			score = Score(audio_score, filename_score, album_score)
+			matches.append(Match(song, score))
 	
+	song, score = max(matches, key=lambda match: match.score.filename * 1000 + match.score.album)
+	confident = score.audio >= 40 and score.filename >= 70 and score.album >= 75
 	return song, confident
 
 def ask_user(mp3file, song):
@@ -161,7 +157,8 @@ def write_mp3tags(mp3file, song):
 	audio['TIT2'] = TIT2(encoding=3, text=song.title)
 	audio['TALB'] = TALB(encoding=3, text=song.album)
 	with urllib.request.urlopen(paths[arguments['keywords']][0]) as cover:
-		audio['APIC'] = APIC(encoding=3, mime=cover.info().get_content_type(), type=3, desc='Cover', data=cover.read())
+		content_type = cover.info().get_content_type()
+		audio['APIC'] = APIC(encoding=3, mime=content_type, type=3, desc='Cover', data=cover.read())
 	audio.save()
 
 def normalize_mp3file(mp3file):
@@ -178,7 +175,8 @@ def modify_mp3file(mp3file, song):
 	write_mp3tags(mp3file, song)
 	normalize_mp3file(mp3file)
 
-def main(argv=None):
+def main(argv=sys.argv):
+	# TODO: add command line option parser
 	if len(argv) < 2:
 		logger.error('please provide a youtube video url')
 		sys.exit(1)
@@ -191,5 +189,5 @@ def main(argv=None):
 	modify_mp3file(mp3file, song)
 
 if __name__ == '__main__':
-	main(argv=sys.argv)
+	main()
 
