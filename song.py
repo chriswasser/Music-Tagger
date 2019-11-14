@@ -90,6 +90,8 @@ def fingerprint_mp3file(mp3file):
 				for release in recording['releasegroups']:
 					same_artist = parse_artist(release) == artist
 
+					if 'type' not in release:
+						continue
 					is_mix = not same_artist and release['type'] == 'Album'
 					is_compilation = same_artist and release['type'] == 'Album'
 					is_single = same_artist and release['type'] == 'Single'
@@ -100,7 +102,7 @@ def fingerprint_mp3file(mp3file):
 					if album_score < 50 and is_compilation:
 						album, album_score = release['title'], 50
 					if album_score < 75 and is_single:
-						album, album_score = release['title'], 75
+						album, album_score = release['title'] + ' - Single', 75
 					if album_score < 100 and is_album:
 						album, album_score = release['title'], 100
 
@@ -121,11 +123,16 @@ def ask_user(mp3file, song):
 
 	answer = input('Perform manual adjustments? ')
 	if 'n' in answer or 'N' in answer:
+		print('Continuing with the old song attributes')
 		return song
 
+	print('Leave individual fields blank to keep the old value')
 	artist = input('New Artist: ')
+	artist = artist if artist else song.artist
 	title = input('New Title: ')
+	title = title if title else song.title
 	album = input('New Album: ')
+	album = album if album else song.album
 	return Song(artist, title, album)
 
 def rename_mp3file(mp3file, song):
@@ -135,7 +142,7 @@ def rename_mp3file(mp3file, song):
 
 def write_mp3tags(mp3file, song):
 	arguments = {
-		'keywords': f'{song.artist} {song.title} Album Cover',
+		'keywords': f'{song.artist} {song.title} {song.album} Cover',
 		'limit': 1,
 		'no_download': True,
 		'silent_mode': True,
@@ -156,8 +163,10 @@ def write_mp3tags(mp3file, song):
 	audio['TPE1'] = TPE1(encoding=3, text=song.artist)
 	audio['TIT2'] = TIT2(encoding=3, text=song.title)
 	audio['TALB'] = TALB(encoding=3, text=song.album)
-	with urllib.request.urlopen(paths[arguments['keywords']][0]) as cover:
+	with urllib.request.urlopen(url) as cover:
 		content_type = cover.info().get_content_type()
+		# pjpeg mime cannot be used for a cover
+		content_type = content_type.replace('pjpeg', 'jpeg')
 		audio['APIC'] = APIC(encoding=3, mime=content_type, type=3, desc='Cover', data=cover.read())
 	audio.save()
 
