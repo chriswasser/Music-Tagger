@@ -5,12 +5,15 @@ import contextlib
 import io
 import os
 import sys
+import urllib.request
 
 import acoustid
 import dotenv
 import ffmpeg_normalize
 from ffmpeg_normalize.__main__ import main as ffmpeg_normalize_main
 from fuzzywuzzy import fuzz, process
+from google_images_download import google_images_download
+from mutagen.id3 import ID3, TPE1, TIT2, TALB, APIC
 import youtube_dl
 
 Song = collections.namedtuple(typename='Song', field_names=['artist', 'title', 'album'])
@@ -73,6 +76,12 @@ def fingerprint_mp3file(mp3file):
 					album_artist = parse_artist(releasegroup)
 
 					if album_artist == artist:
+						# TODO: change handling of Singles and Albums as well as suboptimal albums, e.g. use score
+						# - different artist: 25
+						# - compilation: 50
+						# - single: 75
+						# - album: 100
+						# TODO: prevent None album values due to mp3tagging error
 						# ignore compilations
 						if 'secondarytypes' in releasegroup:
 							continue
@@ -110,7 +119,24 @@ def rename_mp3file(mp3file, song):
 	return new_file
 
 def write_mp3tags(mp3file, song):
-	pass
+	arguments = {
+		'keywords': f'{song.artist} {song.title} Album Cover',
+		'limit': 1,
+		'no_download': True,
+		'silent_mode': True,
+	}
+	with contextlib.redirect_stdout(None):
+		paths, num_errors = google_images_download.googleimagesdownload().download(arguments)
+	if num_errors > 0:
+		print(f'WARNING: during cover download {num_errors} errors occurred')
+
+	audio = ID3(mp3file)
+	audio['TPE1'] = TPE1(encoding=3, text=song.artist)
+	audio['TIT2'] = TIT2(encoding=3, text=song.title)
+	audio['TALB'] = TALB(encoding=3, text=song.album)
+	with urllib.request.urlopen(paths[arguments['keywords']][0]) as cover:
+		audio['APIC'] = APIC(encoding=3, mime=cover.info().get_content_type(), type=3, desc='Cover', data=cover.read())
+	audio.save()
 
 def normalize_mp3file(mp3file):
 	# pass custom arguments to ffmpeg_normalize's main
