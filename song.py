@@ -3,6 +3,7 @@
 import collections
 import contextlib
 import io
+import logging
 import os
 import sys
 import urllib.request
@@ -20,6 +21,13 @@ Song = collections.namedtuple(typename='Song', field_names=['artist', 'title', '
 
 dotenv.load_dotenv()
 ACOUSTID_API_KEY = os.getenv("ACOUSTID_API_KEY")
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(stream=sys.stderr)
+formatter = logging.Formatter('%(asctime)s:%(name)s:%(levelname)s:%(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 @contextlib.contextmanager
 def main_arguments(argv=None):
@@ -104,14 +112,25 @@ def fingerprint_mp3file(mp3file):
 		scorer=fuzz.token_set_ratio
 	)
 	mp3audio_score = matches[song]
-	confident = filename_score < 70 or mp3audio_score < 40
+	confident = filename_score >= 70 or mp3audio_score >= 40
 	
 	return song, confident
 
 def ask_user(mp3file, song):
-	# TODO: query user if is fine with the current artist, title and album choice
-	# TODO: query for manual selection of artist, title and album
-	return song
+	print('Auto tagging finished with a low confidence level')
+	print(f'Filename: {mp3file}')
+	print(f'Artist: {song.artist}')
+	print(f'Title: {song.title}')
+	print(f'Album: {song.album}')
+
+	answer = input('Perform manual adjustments? ')
+	if 'n' in answer or 'N' in answer:
+		return song
+
+	artist = input('New Artist: ')
+	title = input('New Title: ')
+	album = input('New Album: ')
+	return Song(artist, title, album)
 
 def rename_mp3file(mp3file, song):
 	new_file = f'{song.artist} - {song.title}.mp3'
@@ -125,10 +144,17 @@ def write_mp3tags(mp3file, song):
 		'no_download': True,
 		'silent_mode': True,
 	}
-	with contextlib.redirect_stdout(None):
-		paths, num_errors = google_images_download.googleimagesdownload().download(arguments)
+	while True:
+		with contextlib.redirect_stdout(None):
+			paths, num_errors = google_images_download.googleimagesdownload().download(arguments)
+		try:
+			url = paths[arguments['keywords']][0]
+		except IndexError:
+			logger.warning('retrying cover download due to a missing image url')
+		else:
+			break
 	if num_errors > 0:
-		print(f'WARNING: during cover download {num_errors} errors occurred')
+		logger.warning(f'during cover download {num_errors} errors occurred')
 
 	audio = ID3(mp3file)
 	audio['TPE1'] = TPE1(encoding=3, text=song.artist)
@@ -154,7 +180,7 @@ def modify_mp3file(mp3file, song):
 
 def main(argv=None):
 	if len(argv) < 2:
-		print('ERROR: please provide a youtube video url')
+		logger.error('please provide a youtube video url')
 		sys.exit(1)
 	url = argv[1]
 
