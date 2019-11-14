@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import collections
 import contextlib
 import io
@@ -31,12 +32,12 @@ formatter = logging.Formatter('%(asctime)s:%(name)s:%(levelname)s:%(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-@contextlib.contextmanager
-def main_arguments(argv=None):
-    sys._argv = sys.argv[:]
-    sys.argv = argv
-    yield
-    sys.argv = sys._argv
+def get_argument_parser():
+	parser = argparse.ArgumentParser(
+		description='Download and parse YouTube videos into tagged and normalized MP3 audio files'
+	)
+	parser.add_argument('urls', nargs='+', help='YouTube video URLs to process')
+	return parser
 
 def download_mp3file(url):
 	output = io.StringIO()
@@ -170,6 +171,13 @@ def write_mp3tags(mp3file, song):
 		audio['APIC'] = APIC(encoding=3, mime=content_type, type=3, desc='Cover', data=cover.read())
 	audio.save()
 
+@contextlib.contextmanager
+def main_arguments(argv=None):
+    sys._argv = sys.argv[:]
+    sys.argv = argv
+    yield
+    sys.argv = sys._argv
+
 def normalize_mp3file(mp3file):
 	# pass custom arguments to ffmpeg_normalize's main
 	with main_arguments(argv=[
@@ -184,18 +192,14 @@ def modify_mp3file(mp3file, song):
 	write_mp3tags(mp3file, song)
 	normalize_mp3file(mp3file)
 
-def main(argv=sys.argv):
-	# TODO: add command line option parser
-	if len(argv) < 2:
-		logger.error('please provide a youtube video url')
-		sys.exit(1)
-	url = argv[1]
-
-	mp3file = download_mp3file(url)
-	song, confident = fingerprint_mp3file(mp3file)
-	if not confident:
-		song = ask_user(mp3file, song)
-	modify_mp3file(mp3file, song)
+def main(arguments=None):
+	arguments = get_argument_parser().parse_args(args=arguments)
+	for url in arguments.urls:
+		mp3file = download_mp3file(url)
+		song, confident = fingerprint_mp3file(mp3file)
+		if not confident:
+			song = ask_user(mp3file, song)
+		modify_mp3file(mp3file, song)
 
 if __name__ == '__main__':
 	main()
