@@ -3,6 +3,7 @@
 import argparse
 import collections
 import contextlib
+from enum import IntEnum
 import io
 import logging
 import os
@@ -22,8 +23,16 @@ Song = collections.namedtuple(typename='Song', field_names=['artist', 'title', '
 Score = collections.namedtuple(typename='Score', field_names=['audio', 'filename', 'album'])
 Match = collections.namedtuple(typename='Match', field_names=['song', 'score'])
 
+class AlbumType(IntEnum):
+	NONE = 0
+	MIX = 25
+	COMPILATION = 50
+	SINGLE = 75
+	ALBUM = 100
+
 dotenv.load_dotenv()
-ACOUSTID_API_KEY = os.getenv("ACOUSTID_API_KEY")
+ACOUSTID_APPLICATION_API_KEY = os.getenv("ACOUSTID_APPLICATION_API_KEY")
+ACOUSTID_USER_API_KEY = os.getenv("ACOUSTID_USER_API_KEY")
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -36,7 +45,7 @@ def get_argument_parser():
 	parser = argparse.ArgumentParser(
 		description='Download and parse YouTube videos into tagged and normalized MP3 audio files'
 	)
-	parser.add_argument('urls', nargs='+', help='YouTube video URLs to process')
+	parser.add_argument('urls', metavar='URL', nargs='+', help='YouTube video URLs to process')
 	return parser
 
 def download_mp3file(url):
@@ -66,7 +75,7 @@ def parse_artist(json):
 	return artist_joined
 
 def fingerprint_mp3file(mp3file):
-	response = acoustid.match(ACOUSTID_API_KEY, mp3file, parse=False, meta='recordings releasegroups')
+	response = acoustid.match(ACOUSTID_APPLICATION_API_KEY, mp3file, parse=False, meta='recordings releasegroups')
 	mp3name = os.path.basename(os.path.abspath(mp3file))
 
 	matches = [Match(Song('', '', ''), Score(0, 0, 0))]
@@ -86,7 +95,7 @@ def fingerprint_mp3file(mp3file):
 
 			filename_score = fuzz.token_set_ratio(mp3name, f'{artist} - {title}')
 
-			album, album_score = '', 0
+			album, album_score = '', AlbumType.NONE
 			if 'releasegroups' in recording:
 				for release in recording['releasegroups']:
 					same_artist = parse_artist(release) == artist
@@ -98,21 +107,21 @@ def fingerprint_mp3file(mp3file):
 					is_single = same_artist and release['type'] == 'Single'
 					is_album = same_artist and release['type'] == 'Album' and 'secondarytypes' not in release
 
-					if album_score < 25 and is_mix:
-						album, album_score = release['title'], 25
-					if album_score < 50 and is_compilation:
-						album, album_score = release['title'], 50
-					if album_score < 75 and is_single:
-						album, album_score = release['title'] + ' - Single', 75
-					if album_score < 100 and is_album:
-						album, album_score = release['title'], 100
+					if album_score < AlbumType.MIX and is_mix:
+						album, album_score = release['title'], AlbumType.MIX
+					if album_score < AlbumType.COMPILATION and is_compilation:
+						album, album_score = release['title'], AlbumType.COMPILATION
+					if album_score < AlbumType.SINGLE and is_single:
+						album, album_score = release['title'] + ' - Single', AlbumType.SINGLE
+					if album_score < AlbumType.ALBUM and is_album:
+						album, album_score = release['title'], AlbumType.ALBUM
 
 			song = Song(artist, title, album)
 			score = Score(audio_score, filename_score, album_score)
 			matches.append(Match(song, score))
 	
 	song, score = max(matches, key=lambda match: match.score.filename * 1000 + match.score.album)
-	confident = score.audio >= 40 and score.filename >= 70 and score.album >= 75
+	confident = score.audio >= 40 and score.filename >= 70 and score.album >= AlbumType.SINGLE
 	return song, confident
 
 def ask_user(mp3file, song):
