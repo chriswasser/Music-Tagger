@@ -42,29 +42,27 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 def get_argument_parser():
-	parser = argparse.ArgumentParser(
-		description='Download and parse YouTube videos into tagged and normalized MP3 audio files'
-	)
-	parser.add_argument('urls', metavar='URL', nargs='+', help='YouTube video URLs to process')
+	parser = argparse.ArgumentParser(description='Download and parse YouTube videos into tagged and normalized MP3 audio files')
+	parser.add_argument('urls', metavar='URL', nargs='+', help='YouTube video URLs, which are passed onto youtube-dl for downloading')
 	return parser
 
-def download_mp3file(url):
+def download_mp3files(urls):
 	output = io.StringIO()
 	with contextlib.redirect_stdout(output):
 		try:
 			youtube_dl.main(argv=[
 				'--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0', # store best audio as mp3
-				url, '--output', '%(title)s.%(ext)s', # set filename to video title
+				*urls, '--output', '%(title)s.%(ext)s', # set filename to video title
 			])
 		except SystemExit:
 			# prevent youtube_dl's sys.exit call from stopping execution
 			pass
-	
+
 	# extract filename of written mp3 from youtube_dl output
 	lines = output.getvalue().splitlines()
-	line = [line for line in lines if 'Destination' in line][-1]
-	mp3file = ' '.join(line.split()[2:])
-	return mp3file
+	mp3lines = filter(lambda line: 'Destination' in line and 'mp3' in line, lines)
+	mp3files = map(lambda mp3line: ' '.join(mp3line.split()[2:]), mp3lines)
+	return mp3files
 
 def parse_artist(json):
 	artist_joined = ''
@@ -152,7 +150,7 @@ def rename_mp3file(mp3file, song):
 
 def write_mp3tags(mp3file, song):
 	arguments = {
-		'keywords': f'{song.artist} {song.title} {song.album} Cover',
+		'keywords': f'{song.artist} {song.title} {song.album} Cover'.replace(',', ''),
 		'limit': 1,
 		'no_download': True,
 		'silent_mode': True,
@@ -203,8 +201,8 @@ def modify_mp3file(mp3file, song):
 
 def main(arguments=None):
 	arguments = get_argument_parser().parse_args(args=arguments)
-	for url in arguments.urls:
-		mp3file = download_mp3file(url)
+	mp3files = download_mp3files(arguments.urls)
+	for mp3file in mp3files:
 		song, confident = fingerprint_mp3file(mp3file)
 		if not confident:
 			song = ask_user(mp3file, song)
