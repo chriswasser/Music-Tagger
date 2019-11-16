@@ -43,7 +43,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 def get_argument_parser():
-	parser = argparse.ArgumentParser(description='Download and parse YouTube videos into tagged and normalized MP3 audio files')
+	parser = argparse.ArgumentParser(description='Download and parse videos to tagged and normalized MP3 audio files')
 	parser.add_argument('urls', metavar='URL', nargs='+', help='Video URLs, which are passed to youtube-dl for downloading')
 	parser.add_argument('-m', '--mp3', action='store_true', help='Interpret provided URLs as local MP3 files and skip downloading')
 	return parser
