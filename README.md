@@ -7,6 +7,21 @@ A Python script for automatic downloading and parsing of videos to tagged and no
 - The currently supported Python version can be found in `version.txt`.
 - The current package dependencies can be found in `requirements.txt`.
 
+```sh
+$ git clone git@github.com:chriswasser/Music-Tagger.git
+# clone the repository
+$ cd Music-Tagger
+# change into the created directory
+$ python3 -m venv venv
+# create a new python3 virtual environment
+$ . venv/bin/activate
+# activate the virtual environment
+$ pip install --requirement requirements.txt
+# install the required package dependencies
+$ python3 song.py --help
+# print an up-to-date help message
+```
+
 ## Setup
 
 The fingerprinting capabilities of the script are provided by the [AcoustID web service](https://acoustid.org/webservice "AcoustID web service").
