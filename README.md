@@ -2,8 +2,6 @@
 
 A Python script for automatic downloading and parsing of videos to tagged and normalized MP3 audio files
 
-Download and parse videos into tagged and normalized MP3 audio files
-
 ## Installation
 
 - The currently supported Python version can be found in `version.txt`.
