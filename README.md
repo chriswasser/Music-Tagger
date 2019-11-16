@@ -24,4 +24,3 @@ ACOUSTID_USER_API_KEY=YYYYYYYYYY
 ## Usage
 
 - An up-to-date help message will be printed when executing `python3 song.py --help`
-
