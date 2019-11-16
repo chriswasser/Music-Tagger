@@ -44,7 +44,8 @@ logger.addHandler(handler)
 
 def get_argument_parser():
 	parser = argparse.ArgumentParser(description='Download and parse YouTube videos into tagged and normalized MP3 audio files')
-	parser.add_argument('urls', metavar='URL', nargs='+', help='YouTube video URLs, which are passed onto youtube-dl for downloading')
+	parser.add_argument('urls', metavar='URL', nargs='+', help='Video URLs, which are passed to youtube-dl for downloading')
+	parser.add_argument('-m', '--mp3', action='store_true', help='Interpret provided URLs as local MP3 files and skip downloading')
 	return parser
 
 def download_mp3files(urls):
@@ -219,7 +220,7 @@ def modify_mp3file(mp3file, song):
 
 def main(arguments=None):
 	arguments = get_argument_parser().parse_args(args=arguments)
-	mp3files = download_mp3files(arguments.urls)
+	mp3files = download_mp3files(arguments.urls) if not arguments.mp3 else arguments.urls
 	for mp3file in mp3files:
 		song, confident = fingerprint_mp3file(mp3file)
 		if not confident:
