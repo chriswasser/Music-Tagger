@@ -3,6 +3,7 @@
 import argparse
 import collections
 import contextlib
+from distutils.util import strtobool
 from enum import IntEnum
 import io
 import logging
@@ -122,6 +123,13 @@ def fingerprint_mp3file(mp3file):
 	confident = score.audio >= 40 and score.filename >= 70 and score.album >= AlbumType.SINGLE
 	return song, confident
 
+def bool_input(prompt):
+	while True:
+		try:
+			return bool(strtobool(input(prompt)))
+		except ValueError:
+			print('Please answer y(es) or n(o)!')
+
 def ask_user(mp3file, song):
 	print('Auto tagging finished with a low confidence level')
 	print(f'Filename: {mp3file}')
@@ -129,19 +137,29 @@ def ask_user(mp3file, song):
 	print(f'Title: {song.title}')
 	print(f'Album: {song.album}')
 
-	answer = input('Perform manual adjustments? ')
-	if 'n' in answer or 'N' in answer:
-		print('Continuing with the old song attributes')
-		return song
+	adjust_manually = bool_input('Perform manual adjustments? ')
+	if adjust_manually:
+		print('Leave individual fields blank to keep the old value')
+		artist = input('New Artist: ') or song.artist
+		title = input('New Title: ') or song.title
+		album = input('New Album: ') or song.album
+		song = Song(artist, title, album)
 
-	print('Leave individual fields blank to keep the old value')
-	artist = input('New Artist: ')
-	artist = artist if artist else song.artist
-	title = input('New Title: ')
-	title = title if title else song.title
-	album = input('New Album: ')
-	album = album if album else song.album
-	return Song(artist, title, album)
+	submit_mp3tags = bool_input('Submit MP3 tags to the AcoustID web service? ')
+	if submit_mp3tags:
+		duration, fingerprint = acoustid.fingerprint_file(mp3file)
+		mp3data = {
+			'duration': duration,
+			'fingerprint': fingerprint,
+			'artist': artist,
+			'track': title,
+			'album': album,
+			'albumartist': artist,
+			'fileformat': 'MP3',
+		}
+		acoustid.submit(ACOUSTID_APPLICATION_API_KEY, ACOUSTID_USER_API_KEY, mp3data)
+
+	return song
 
 def rename_mp3file(mp3file, song):
 	new_file = f'{song.artist} - {song.title}.mp3'
