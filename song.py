@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import sys
+import urllib.error
 import urllib.request
 
 import acoustid
@@ -163,19 +164,19 @@ def ask_user(mp3file, song):
         album = input('New Album: ') or song.album
         song = Song(artist, title, album)
 
-    submit_mp3tags = bool_input('Submit MP3 tags to the AcoustID web service? ')
-    if submit_mp3tags:
-        duration, fingerprint = acoustid.fingerprint_file(mp3file)
-        mp3data = {
-            'duration': duration,
-            'fingerprint': fingerprint,
-            'artist': artist,
-            'track': title,
-            'album': album,
-            'albumartist': artist,
-            'fileformat': 'MP3',
-        }
-        acoustid.submit(ACOUSTID_APPLICATION_API_KEY, ACOUSTID_USER_API_KEY, mp3data)
+        submit_mp3tags = bool_input('Submit new MP3 tags to the AcoustID web service? ')
+        if submit_mp3tags:
+            duration, fingerprint = acoustid.fingerprint_file(mp3file)
+            mp3data = {
+                'duration': duration,
+                'fingerprint': fingerprint,
+                'artist': artist,
+                'track': title,
+                'album': album,
+                'albumartist': artist,
+                'fileformat': 'MP3',
+            }
+            acoustid.submit(ACOUSTID_APPLICATION_API_KEY, ACOUSTID_USER_API_KEY, mp3data)
 
     return song
 
@@ -199,7 +200,7 @@ def rename_mp3file(mp3file, song, output_directory, keep_original):
 
 def write_mp3tags(mp3file, song):
     arguments = {
-        'keywords': f'{song.artist} {song.title} {song.album} Cover'.replace(',', ''),
+        'keywords': f'{song.artist} {song.title} {song.album} Album Cover'.replace(',', ''),
         'limit': 1,
         'no_download': True,
         'silent_mode': True,
@@ -220,12 +221,15 @@ def write_mp3tags(mp3file, song):
     audio['TPE1'] = TPE1(encoding=3, text=song.artist)
     audio['TIT2'] = TIT2(encoding=3, text=song.title)
     audio['TALB'] = TALB(encoding=3, text=song.album)
-    request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
-    with urllib.request.urlopen(request) as cover:
-        content_type = cover.info().get_content_type()
-        # pjpeg mime cannot be used for a cover
-        content_type = content_type.replace('pjpeg', 'jpeg')
-        audio['APIC'] = APIC(encoding=3, mime=content_type, type=3, desc='Cover', data=cover.read())
+    try:
+        request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
+        with urllib.request.urlopen(request) as cover:
+            content_type = cover.info().get_content_type()
+            # pjpeg mime cannot be used for a cover
+            content_type = content_type.replace('pjpeg', 'jpeg')
+            audio['APIC'] = APIC(encoding=3, mime=content_type, type=3, desc='Cover', data=cover.read())
+    except urllib.error.HTTPError as error:
+        logger.error(f'cover download failed and returned HTTP error code {error.code} with reason: {error.reason}')
     audio.save()
 
 
