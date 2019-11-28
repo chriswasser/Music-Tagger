@@ -3,16 +3,18 @@
 import argparse
 import collections
 import contextlib
-from distutils.util import strtobool
-from enum import IntEnum
+import distutils.util
+import enum
 import io
 import logging
 import os
+import shutil
 import sys
 import urllib.request
 
 import acoustid
 import dotenv
+import fake_useragent
 from ffmpeg_normalize.__main__ import main as ffmpeg_normalize_main
 from fuzzywuzzy import fuzz
 from google_images_download import google_images_download
@@ -20,7 +22,7 @@ from mutagen.id3 import ID3, TPE1, TIT2, TALB, APIC
 import youtube_dl
 
 
-class AlbumType(IntEnum):
+class AlbumType(enum.IntEnum):
     NONE = 0
     MIX = 25
     COMPILATION = 50
@@ -36,6 +38,9 @@ dotenv.load_dotenv()
 ACOUSTID_APPLICATION_API_KEY = os.getenv("ACOUSTID_APPLICATION_API_KEY")
 ACOUSTID_USER_API_KEY = os.getenv("ACOUSTID_USER_API_KEY")
 
+# used for url requests to look like a real browser
+USER_AGENT = fake_useragent.UserAgent().firefox
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler(stream=sys.stderr)
@@ -45,19 +50,24 @@ logger.addHandler(handler)
 
 
 def get_argument_parser():
-    parser = argparse.ArgumentParser(description='Download and parse videos to tagged and normalized MP3 audio files')
+    parser = argparse.ArgumentParser(description='Download and parse videos to tagged and normalized MP3 audio files', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('urls', metavar='URL', nargs='+', help='Video URLs, which are passed to youtube-dl for downloading')
+    parser.add_argument('-od', '--output-directory', nargs='?', default='.', help='Custom output directory to place the resulting audio files in')
     parser.add_argument('-m', '--mp3', action='store_true', help='Interpret provided URLs as local MP3 files and skip downloading')
+    parser.add_argument('-dd', '--download-directory', nargs='?', default='downloaded', help='Custom output directory to place downloaded MP3 files in (only used when -m/--mp3 is not specified)')
+    parser.add_argument('-k', '--keep', action='store_true', help='Keep original MP3 files instead of overwriting them')
+    parser.add_argument('-s', '--skip', action='store_true', help='Skip processing of unconfident song matches and instead place them in a seperate directory (see: -d/--skipped-directory)')
+    parser.add_argument('-sd', '--skip-directory', nargs='?', default='skipped', help='Custom output directory to place skipped song matches in (only used in conjunction with -s/--skip)')
     return parser
 
 
-def download_mp3files(urls):
+def download_mp3files(urls, download_directory):
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         try:
             youtube_dl.main(argv=[
                 '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0',  # store best audio as mp3
-                *urls, '--output', '%(title)s.%(ext)s',  # set filename to video title
+                *urls, '--output', os.path.join(download_directory, '%(title)s.%(ext)s'),  # set filename to video title
             ])
         except SystemExit:
             # prevent youtube_dl's sys.exit call from stopping execution
@@ -133,14 +143,14 @@ def fingerprint_mp3file(mp3file):
 def bool_input(prompt):
     while True:
         try:
-            return bool(strtobool(input(prompt)))
+            return bool(distutils.util.strtobool(input(prompt)))
         except ValueError:
             print('Please answer y(es) or n(o)!')
 
 
 def ask_user(mp3file, song):
     print('Auto tagging finished with a low confidence level')
-    print(f'Filename: {mp3file}')
+    print(f'Filename: {os.path.basename(mp3file)}')
     print(f'Artist: {song.artist}')
     print(f'Title: {song.title}')
     print(f'Album: {song.album}')
@@ -170,9 +180,20 @@ def ask_user(mp3file, song):
     return song
 
 
-def rename_mp3file(mp3file, song):
-    new_file = f'{song.artist} - {song.title}.mp3'
-    os.rename(mp3file, os.path.join(os.path.dirname(mp3file), new_file))
+def copy_or_move(source, destination, keep_original):
+    if keep_original:
+        try:
+            shutil.copy2(source, destination)
+        except shutil.SameFileError:
+            logger.warning(f'although -k/--keep is specified, the mp3file {source} will be overwritten due to the set output directory (see: -o/--output)')
+    else:
+        os.replace(source, destination)
+
+
+def rename_mp3file(mp3file, song, output_directory, keep_original):
+    os.makedirs(output_directory, exist_ok=True)
+    new_file = os.path.join(output_directory, f'{song.artist} - {song.title}.mp3')
+    copy_or_move(mp3file, new_file, keep_original)
     return new_file
 
 
@@ -199,7 +220,8 @@ def write_mp3tags(mp3file, song):
     audio['TPE1'] = TPE1(encoding=3, text=song.artist)
     audio['TIT2'] = TIT2(encoding=3, text=song.title)
     audio['TALB'] = TALB(encoding=3, text=song.album)
-    with urllib.request.urlopen(url) as cover:
+    request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
+    with urllib.request.urlopen(request) as cover:
         content_type = cover.info().get_content_type()
         # pjpeg mime cannot be used for a cover
         content_type = content_type.replace('pjpeg', 'jpeg')
@@ -225,8 +247,8 @@ def normalize_mp3file(mp3file):
         ffmpeg_normalize_main()
 
 
-def modify_mp3file(mp3file, song):
-    mp3file = rename_mp3file(mp3file, song)
+def modify_mp3file(mp3file, song, output_directory, keep_original):
+    mp3file = rename_mp3file(mp3file, song, output_directory, keep_original)
     logger.debug(f'writing mp3tags to mp3file: {song} --> {mp3file}')
     write_mp3tags(mp3file, song)
     logger.debug(f'normalizing audio volume of mp3file: {mp3file}')
@@ -237,7 +259,7 @@ def modify_mp3file(mp3file, song):
 def main(arguments=None):
     arguments = get_argument_parser().parse_args(args=arguments)
     logger.debug(f'received the following arguments: {arguments}')
-    mp3files = download_mp3files(arguments.urls) if not arguments.mp3 else arguments.urls
+    mp3files = download_mp3files(arguments.urls, arguments.download_directory) if not arguments.mp3 else arguments.urls
     logger.debug(f'all mp3files to process: {mp3files}')
     for mp3file in mp3files:
         logger.info(f'start processing mp3file: {mp3file}')
@@ -245,10 +267,21 @@ def main(arguments=None):
         logger.debug(f'fingerprinting finished with result: {song}')
         if not confident:
             logger.debug(f'low confidence for the correctness of the fingerprinting result')
+            if arguments.skip:
+                os.makedirs(arguments.skip_directory, exist_ok=True)
+                new_file = os.path.join(arguments.skip_directory, os.path.basename(mp3file))
+                copy_or_move(mp3file, new_file, arguments.keep)
+                logger.info(f'skipped processing of song and place mp3file in: {new_file}')
+                continue
             song = ask_user(mp3file, song)
             logger.debug(f'using user-corrected song attributes: {song}')
-        mp3file = modify_mp3file(mp3file, song)
+        mp3file = modify_mp3file(mp3file, song, arguments.output_directory, arguments.keep)
         logger.info(f'wrote result to mp3file: {mp3file}')
+    try:
+        os.rmdir(arguments.download_directory)
+    except (FileNotFoundError, OSError):
+        # directory does not exist or is not empty
+        pass
 
 
 if __name__ == '__main__':
