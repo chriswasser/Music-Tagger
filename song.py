@@ -53,7 +53,7 @@ def get_argument_parser():
     parser = argparse.ArgumentParser(description='Download and parse videos to tagged and normalized MP3 audio files', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('urls', metavar='URL', nargs='+', help='Video URLs, which are passed to youtube-dl for downloading')
     parser.add_argument('-od', '--output-directory', metavar='DIRECTORY', nargs=None, default='.', help='Custom output directory to place the resulting audio files in')
-    parser.add_argument('-m', '--mp3', action='store_true', help='Interpret provided URLs as local MP3 files and skip downloading')
+    parser.add_argument('-f', '--files', action='store_true', help='Interpret provided URLs as local MP3 files and skip downloading')
     parser.add_argument('-dd', '--download-directory', metavar='DIRECTORY', nargs=None, default='downloaded', help='Custom output directory to place downloaded MP3 files in (only used when -m/--mp3 is not specified)')
     parser.add_argument('-k', '--keep', action='store_true', help='Keep original MP3 files instead of overwriting them')
     parser.add_argument('-s', '--skip', action='store_true', help='Skip processing of unconfident song matches and instead place them in a seperate directory (see: -d/--skipped-directory)')
@@ -61,6 +61,7 @@ def get_argument_parser():
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Set the verbosity level of the program')
     parser.add_argument('-ey', '--extra-youtube-dl', metavar='ARGUMENT', nargs='+', help='Additional arguments passed for youtube-dl invokation')
     parser.add_argument('-ef', '--extra-ffmpeg-normalize', metavar='ARGUMENT', nargs='+', help='Additional arguments passed for ffmpeg-normalize invokation')
+    parser.add_argument('-m', '--manual', action='store_true', help='Always query the user for manual corrections even if automatic MP3 tagging finished confidently')
     return parser
 
 
@@ -272,7 +273,7 @@ def main(arguments=None):
         logger.info(f'start processing mp3file: {mp3file}')
         song, confident = fingerprint_mp3file(mp3file)
         logger.debug(f'fingerprinting finished with result: {song}')
-        if not confident:
+        if not confident or arguments.manual:
             logger.debug(f'low confidence for the correctness of the fingerprinting result')
             if arguments.skip:
                 os.makedirs(arguments.skip_directory, exist_ok=True)
