@@ -43,7 +43,6 @@ ACOUSTID_USER_API_KEY = os.getenv("ACOUSTID_USER_API_KEY")
 USER_AGENT = fake_useragent.UserAgent().firefox
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 handler = logging.StreamHandler(stream=sys.stderr)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
@@ -53,23 +52,26 @@ logger.addHandler(handler)
 def get_argument_parser():
     parser = argparse.ArgumentParser(description='Download and parse videos to tagged and normalized MP3 audio files', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('urls', metavar='URL', nargs='+', help='Video URLs, which are passed to youtube-dl for downloading')
-    parser.add_argument('-od', '--output-directory', nargs='?', default='.', help='Custom output directory to place the resulting audio files in')
+    parser.add_argument('-od', '--output-directory', metavar='DIRECTORY', nargs=None, default='.', help='Custom output directory to place the resulting audio files in')
     parser.add_argument('-m', '--mp3', action='store_true', help='Interpret provided URLs as local MP3 files and skip downloading')
-    parser.add_argument('-dd', '--download-directory', nargs='?', default='downloaded', help='Custom output directory to place downloaded MP3 files in (only used when -m/--mp3 is not specified)')
+    parser.add_argument('-dd', '--download-directory', metavar='DIRECTORY', nargs=None, default='downloaded', help='Custom output directory to place downloaded MP3 files in (only used when -m/--mp3 is not specified)')
     parser.add_argument('-k', '--keep', action='store_true', help='Keep original MP3 files instead of overwriting them')
     parser.add_argument('-s', '--skip', action='store_true', help='Skip processing of unconfident song matches and instead place them in a seperate directory (see: -d/--skipped-directory)')
-    parser.add_argument('-sd', '--skip-directory', nargs='?', default='skipped', help='Custom output directory to place skipped song matches in (only used in conjunction with -s/--skip)')
+    parser.add_argument('-sd', '--skip-directory', metavar='DIRECTORY', nargs=None, default='skipped', help='Custom output directory to place skipped song matches in (only used in conjunction with -s/--skip)')
+    parser.add_argument('-v', '--verbose', action='count', default=0, help='Set the verbosity level of the program')
+    parser.add_argument('-ey', '--extra-youtube-dl', metavar='ARGUMENT', nargs='+', help='Additional arguments passed for youtube-dl invokation')
+    parser.add_argument('-ef', '--extra-ffmpeg-normalize', metavar='ARGUMENT', nargs='+', help='Additional arguments passed for ffmpeg-normalize invokation')
     return parser
 
 
-def download_mp3files(urls, download_directory):
+def download_mp3files(urls, download_directory, extra_args):
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         try:
             youtube_dl.main(argv=[
                 '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0',  # store best audio as mp3
                 *urls, '--output', os.path.join(download_directory, '%(title)s.%(ext)s'),  # set filename to video title
-            ])
+            ] + extra_args)
         except SystemExit:
             # prevent youtube_dl's sys.exit call from stopping execution
             pass
@@ -241,29 +243,30 @@ def main_arguments(argv=None):
     sys.argv = sys._argv
 
 
-def normalize_mp3file(mp3file):
+def normalize_mp3file(mp3file, extra_args):
     # pass custom arguments to ffmpeg_normalize's main
     with main_arguments(argv=[
             'ffmpeg-normalize',  # first argument is always the program name
             '--audio-codec', 'libmp3lame', '--audio-bitrate', '320k',  # read and write an mp3file
             mp3file, '--force', '--output', mp3file,  # perform inplace normalization
-    ]):
+    ] + extra_args):
         ffmpeg_normalize_main()
 
 
-def modify_mp3file(mp3file, song, output_directory, keep_original):
+def modify_mp3file(mp3file, song, output_directory, keep_original, extra_args):
     mp3file = rename_mp3file(mp3file, song, output_directory, keep_original)
     logger.debug(f'writing mp3tags to mp3file: {song} --> {mp3file}')
     write_mp3tags(mp3file, song)
     logger.debug(f'normalizing audio volume of mp3file: {mp3file}')
-    normalize_mp3file(mp3file)
+    normalize_mp3file(mp3file, extra_args)
     return mp3file
 
 
 def main(arguments=None):
     arguments = get_argument_parser().parse_args(args=arguments)
+    logger.setLevel(logging.ERROR - arguments.verbose * 10)
     logger.debug(f'received the following arguments: {arguments}')
-    mp3files = download_mp3files(arguments.urls, arguments.download_directory) if not arguments.mp3 else arguments.urls
+    mp3files = download_mp3files(arguments.urls, arguments.download_directory, arguments.extra_youtube_dl) if not arguments.mp3 else arguments.urls
     logger.debug(f'all mp3files to process: {mp3files}')
     for mp3file in mp3files:
         logger.info(f'start processing mp3file: {mp3file}')
@@ -279,7 +282,7 @@ def main(arguments=None):
                 continue
             song = ask_user(mp3file, song)
             logger.debug(f'using user-corrected song attributes: {song}')
-        mp3file = modify_mp3file(mp3file, song, arguments.output_directory, arguments.keep)
+        mp3file = modify_mp3file(mp3file, song, arguments.output_directory, arguments.keep, arguments.extra_ffmpeg_normalize)
         logger.info(f'wrote result to mp3file: {mp3file}')
     try:
         os.rmdir(arguments.download_directory)
