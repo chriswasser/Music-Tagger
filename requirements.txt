@@ -7,6 +7,7 @@ fake-useragent==0.1.11
 ffmpeg-normalize==1.15.3
 flake8==3.7.9
 fuzzywuzzy==0.17.0
+-e git://github.com/Joeclinton1/google-images-download.git@620e7f54ea29631e5e7d8a2b82a16a40932bf42a#egg=google-images-download
 idna==2.8
 isort==4.3.21
 lazy-object-proxy==1.4.3
