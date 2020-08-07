@@ -18,7 +18,6 @@ import dotenv
 import fake_useragent
 from ffmpeg_normalize.__main__ import main as ffmpeg_normalize_main
 from fuzzywuzzy import fuzz
-from google_images_download import google_images_download
 from mutagen.id3 import ID3, TPE1, TIT2, TALB, APIC
 import youtube_dl
 
@@ -59,8 +58,8 @@ def get_argument_parser():
     parser.add_argument('-s', '--skip', action='store_true', help='Skip processing of unconfident song matches and instead place them in a seperate directory (see: -d/--skipped-directory)')
     parser.add_argument('-sd', '--skip-directory', metavar='DIRECTORY', nargs=None, default='skipped', help='Custom output directory to place skipped song matches in (only used in conjunction with -s/--skip)')
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Set the verbosity level of the program')
-    parser.add_argument('-ey', '--extra-youtube-dl', metavar='ARGUMENT', nargs='+', help='Additional arguments passed for youtube-dl invokation')
-    parser.add_argument('-ef', '--extra-ffmpeg-normalize', metavar='ARGUMENT', nargs='+', help='Additional arguments passed for ffmpeg-normalize invokation')
+    parser.add_argument('-ey', '--extra-youtube-dl', metavar='ARGUMENT', nargs='+', default=[], help='Additional arguments passed for youtube-dl invokation')
+    parser.add_argument('-ef', '--extra-ffmpeg-normalize', metavar='ARGUMENT', nargs='+', default=[], help='Additional arguments passed for ffmpeg-normalize invokation')
     parser.add_argument('-m', '--manual', action='store_true', help='Always query the user for manual corrections even if automatic MP3 tagging finished confidently')
     return parser
 
@@ -202,37 +201,10 @@ def rename_mp3file(mp3file, song, output_directory, keep_original):
 
 
 def write_mp3tags(mp3file, song):
-    arguments = {
-        'keywords': f'{song.artist} {song.title} {song.album} Album Cover'.replace(',', ''),
-        'limit': 1,
-        'no_download': True,
-        'silent_mode': True,
-    }
-    while True:
-        with contextlib.redirect_stdout(None):
-            paths, num_errors = google_images_download.googleimagesdownload().download(arguments)
-        try:
-            url = paths[arguments['keywords']][0]
-        except IndexError:
-            logger.warning('retrying cover download due to a missing image url')
-        else:
-            break
-    if num_errors > 0:
-        logger.warning(f'during cover download {num_errors} errors occurred')
-
     audio = ID3(mp3file)
     audio['TPE1'] = TPE1(encoding=3, text=song.artist)
     audio['TIT2'] = TIT2(encoding=3, text=song.title)
     audio['TALB'] = TALB(encoding=3, text=song.album)
-    try:
-        request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
-        with urllib.request.urlopen(request) as cover:
-            content_type = cover.info().get_content_type()
-            # pjpeg mime cannot be used for a cover
-            content_type = content_type.replace('pjpeg', 'jpeg')
-            audio['APIC'] = APIC(encoding=3, mime=content_type, type=3, desc='Cover', data=cover.read())
-    except urllib.error.HTTPError as error:
-        logger.error(f'cover download failed and returned HTTP error code {error.code} with reason: {error.reason}')
     audio.save()
 
 
@@ -267,7 +239,7 @@ def main(arguments=None):
     arguments = get_argument_parser().parse_args(args=arguments)
     logger.setLevel(logging.ERROR - arguments.verbose * 10)
     logger.debug(f'received the following arguments: {arguments}')
-    mp3files = download_mp3files(arguments.urls, arguments.download_directory, arguments.extra_youtube_dl) if not arguments.mp3 else arguments.urls
+    mp3files = download_mp3files(arguments.urls, arguments.download_directory, arguments.extra_youtube_dl) if not arguments.files else arguments.urls
     logger.debug(f'all mp3files to process: {mp3files}')
     for mp3file in mp3files:
         logger.info(f'start processing mp3file: {mp3file}')
