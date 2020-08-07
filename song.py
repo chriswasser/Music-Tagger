@@ -80,7 +80,7 @@ def download_mp3files(urls, download_directory, extra_args):
     # extract filename of written mp3 from youtube_dl output
     lines = output.getvalue().splitlines()
     mp3lines = filter(lambda line: 'Destination' in line and 'mp3' in line, lines)
-    mp3files = map(lambda mp3line: ' '.join(mp3line.split()[2:]), mp3lines)
+    mp3files = map(lambda mp3line: mp3line.split(sep=' ', maxsplit=2)[-1], mp3lines)
     return list(mp3files)
 
 
