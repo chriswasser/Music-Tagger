@@ -7,7 +7,8 @@ A Python script for automatic downloading and parsing of videos to tagged and no
 - The currently supported Python version can be found in `.python-version`.
 - The current package dependencies can be found in `requirements.txt`.
 - The used [`ffmpeg-normalize`](https://github.com/slhck/ffmpeg-normalize "Github ffmpeg-normalize") package requires [FFmpeg](https://ffmpeg.org "FFmpeg homepage"). See installation instructions on either webpage.
-- The used [`pyacoustid`](https://github.com/beetbox/pyacoustid "Github pyacoustid") package required the [Chromaprint](https://github.com/acoustid/chromaprint "Github chromaprint") fingerprinting library. See installation instructions on either webpage.
+- The used [`pyacoustid`](https://github.com/beetbox/pyacoustid "Github pyacoustid") package requires the [Chromaprint](https://github.com/acoustid/chromaprint "Github chromaprint") fingerprinting library. See installation instructions on either webpage.
+- The used [`sacad`](https://github.com/desbma/sacad "Github SACAD") package optionally uses [optipng](http://optipng.sourceforge.net/ "Sourceforge optipng") and [jpegoptim](http://freecode.com/projects/jpegoptim "Sourceforge jpegoptim") to benefit from smaller cover images by applying lossless recompression.
 
 ```sh
 $ git clone git@github.com:chriswasser/Music-Tagger.git
