@@ -207,10 +207,11 @@ def rename_mp3file(mp3file, song, output_directory, keep_original):
 
 def write_mp3tags(mp3file, song):
     cover_filename = 'Cover.jpeg'
-    with contextlib.redirect_stderr(None), main_arguments(argv=[
-            'sacad',  # first argument is always the program name
-            song.artist, song.title,  # set song information
-            '600', cover_filename,  # set output size and name / format
+    with main_arguments(argv=[
+        'sacad',  # first argument is always the program name
+        '--verbosity', 'quiet',  # silence sacad output
+        song.artist, song.title,  # set song information
+        '600', cover_filename,  # set output size and name / format
     ]):
         sacad_main()
 
@@ -218,10 +219,13 @@ def write_mp3tags(mp3file, song):
     audio['TPE1'] = TPE1(encoding=3, text=song.artist)
     audio['TIT2'] = TIT2(encoding=3, text=song.title)
     audio['TALB'] = TALB(encoding=3, text=song.album)
-    with open(cover_filename, 'rb') as cover:
-        audio['APIC'] = APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=cover.read())
+    try:
+        with open(cover_filename, 'rb') as cover:
+            audio['APIC'] = APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=cover.read())
+        os.remove(cover_filename)
+    except IOError:
+        logger.warning(f'could not get cover art for mp3file: {mp3file}')
     audio.save()
-    os.remove(cover_filename)
 
 
 def normalize_mp3file(mp3file, extra_args):
@@ -245,7 +249,7 @@ def modify_mp3file(mp3file, song, output_directory, keep_original, extra_args):
 
 def main(arguments=None):
     arguments = get_argument_parser().parse_args(args=arguments)
-    logger.setLevel(logging.ERROR - arguments.verbose * 10)
+    logger.setLevel(logging.WARNING - arguments.verbose * 10)
     logger.debug(f'received the following arguments: {arguments}')
     mp3files = download_mp3files(arguments.urls, arguments.download_directory, arguments.extra_youtube_dl) if not arguments.files else arguments.urls
     logger.debug(f'all mp3files to process: {mp3files}')
