@@ -23,7 +23,7 @@ sacad==2.3.4
 tqdm==4.48.2
 typing-extensions==3.7.4.3
 Unidecode==1.1.1
-urllib3==1.25.10
+urllib3==1.26.5
 web-cache==1.1.0
 yarl==1.5.1
 youtube-dl==2021.1.16
