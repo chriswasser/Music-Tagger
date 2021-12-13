@@ -11,7 +11,7 @@ fake-useragent==0.1.11
 ffmpeg-normalize==1.15.3
 fuzzywuzzy==0.17.0
 idna==2.10
-lxml==4.6.2
+lxml==4.6.5
 multidict==4.7.6
 mutagen==1.42.0
 Pillow==7.2.0
