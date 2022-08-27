@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 
-import argparse
-import collections
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+from collections import namedtuple
 import contextlib
 import distutils.util
 import enum
-import io
 import logging
 import os
 import shutil
@@ -14,7 +13,7 @@ import sys
 from typing import Any, Iterable, Optional
 
 import acoustid
-import dotenv
+from dotenv import load_dotenv
 from fuzzywuzzy import fuzz
 from mutagen.id3 import ID3, TPE1, TIT2, TALB, APIC
 
@@ -30,11 +29,11 @@ class ExitCode(enum.IntEnum):
     FAILURE = 1
 
 
-Song = collections.namedtuple(typename="Song", field_names=["artist", "title", "album"])
-Score = collections.namedtuple(typename="Score", field_names=["audio", "filename", "release"])
-Match = collections.namedtuple(typename="Match", field_names=["song", "score"])
+Song = namedtuple(typename="Song", field_names=["artist", "title", "album"])
+Score = namedtuple(typename="Score", field_names=["audio", "filename", "release"])
+Match = namedtuple(typename="Match", field_names=["song", "score"])
 
-dotenv.load_dotenv()
+load_dotenv()
 ACOUSTID_APPLICATION_API_KEY = os.getenv("ACOUSTID_APPLICATION_API_KEY")
 ACOUSTID_USER_API_KEY = os.getenv("ACOUSTID_USER_API_KEY")
 
@@ -47,17 +46,9 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-@contextlib.contextmanager
-def main_arguments(argv=None):
-    sys._argv = sys.argv[:]  # type: ignore
-    sys.argv = argv
-    yield
-    sys.argv = sys._argv  # type: ignore
-
-
-def get_argument_parser():
+def get_argument_parser() -> ArgumentParser:
     # fmt: off
-    parser = argparse.ArgumentParser(description="Download and parse videos to tagged and normalized MP3 audio files", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = ArgumentParser(description="Download and parse videos to tagged and normalized MP3 audio files", formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument("urls", metavar="URL", nargs="+", help="Video URLs, which are passed to youtube-dl for downloading")
     parser.add_argument("-od", "--output-directory", metavar="DIRECTORY", default=".", help="Custom output directory to place the resulting audio files in")
     parser.add_argument("-f", "--files", action="store_true", help="Interpret provided URLs as local MP3 files and skip downloading")
@@ -104,9 +95,9 @@ def download_mp3files(urls, download_directory, extra_args):
     return mp3files
 
 
-def parse_artist(json):
+def parse_artist(artists: Iterable[Any]) -> str:
     artist_joined = ""
-    for artist in json["artists"]:
+    for artist in artists:
         artist_joined += artist["name"]
         if "joinphrase" in artist:
             artist_joined += artist["joinphrase"]
@@ -142,7 +133,7 @@ def fingerprint_mp3file(mp3file):
         for recording in result["recordings"]:
             if "artists" not in recording:
                 continue
-            artist = parse_artist(recording)
+            artist = parse_artist(recording["artists"])
 
             if "title" not in recording:
                 continue
@@ -158,7 +149,7 @@ def fingerprint_mp3file(mp3file):
             elif release := find_single_release(recording["releasegroups"]):
                 release_score = AlbumType.SINGLE
             else:
-                # suggest single release but do not mark as single match
+                # suggest single release but do not mark as single match to ask user for confirmation
                 release = f"{title} - Single"
                 release_score = AlbumType.NONE
 
@@ -171,7 +162,7 @@ def fingerprint_mp3file(mp3file):
     return song, confident
 
 
-def bool_input(prompt):
+def bool_input(prompt: str) -> bool:
     while True:
         try:
             return bool(distutils.util.strtobool(input(prompt)))
@@ -179,23 +170,21 @@ def bool_input(prompt):
             print("Please answer y(es) or n(o)!")
 
 
-def ask_user(mp3file, song):
+def ask_user(mp3file: str, song: Song):
     print("Auto tagging finished with a low confidence level")
     print(f"Filename: {os.path.basename(mp3file)}")
     print(f"Artist: {song.artist}")
     print(f"Title: {song.title}")
     print(f"Album: {song.album}")
 
-    adjust_manually = bool_input("Perform manual adjustments? ")
-    if adjust_manually:
+    if bool_input("Perform manual adjustments? "):
         print("Leave individual fields blank to keep the old value")
         artist = input("New Artist: ") or song.artist
         title = input("New Title: ") or song.title
         album = input("New Album: ") or song.album
         song = Song(artist, title, album)
 
-        submit_mp3tags = bool_input("Submit new MP3 tags to the AcoustID web service? ")
-        if submit_mp3tags:
+        if bool_input("Submit new MP3 tags to the AcoustID web service? "):
             duration, fingerprint = acoustid.fingerprint_file(mp3file)
             mp3data = {
                 "duration": duration,
@@ -256,12 +245,12 @@ def download_cover(artist: str, album: str, filename: str, extra_args: list[str]
 
 
 def add_cover(audio: ID3, song: Song, extra_sacad: list[str]):
-    cover_filename = "Cover.jpeg"
-    download_cover(song.artist, song.album.removesuffix(" - Single"), cover_filename, extra_sacad)
-    if os.path.exists(cover_filename):
-        with open(cover_filename, "rb") as cover:
+    COVER_FILENAME = "Cover.jpeg"
+    download_cover(song.artist, song.album.removesuffix(" - Single"), COVER_FILENAME, extra_sacad)
+    if os.path.exists(COVER_FILENAME):
+        with open(COVER_FILENAME, "rb") as cover:
             audio.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover.read()))
-        os.remove(cover_filename)
+        os.remove(COVER_FILENAME)
     else:
         logger.warning(f"could not get cover art for mp3file: {audio.filename}")
 
