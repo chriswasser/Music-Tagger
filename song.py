@@ -9,22 +9,25 @@ import io
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from typing import Any, Iterable, Optional
 
 import acoustid
 import dotenv
-from ffmpeg_normalize.__main__ import main as ffmpeg_normalize_main
 from fuzzywuzzy import fuzz
 from mutagen.id3 import ID3, TPE1, TIT2, TALB, APIC
-from sacad import cl_main as sacad_main
-import yt_dlp
 
 
 class AlbumType(enum.IntEnum):
     NONE = 0
     SINGLE = 50
     ALBUM = 100
+
+
+class ExitCode(enum.IntEnum):
+    SUCCESS = 0
+    FAILURE = 1
 
 
 Song = collections.namedtuple(typename="Song", field_names=["artist", "title", "album"])
@@ -36,6 +39,8 @@ ACOUSTID_APPLICATION_API_KEY = os.getenv("ACOUSTID_APPLICATION_API_KEY")
 ACOUSTID_USER_API_KEY = os.getenv("ACOUSTID_USER_API_KEY")
 
 logger = logging.getLogger(__name__)
+# prevent duplicate logging messages by not propagating to the root logger (see: https://stackoverflow.com/a/44426266)
+logger.propagate = False
 handler = logging.StreamHandler(stream=sys.stderr)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 handler.setFormatter(formatter)
@@ -52,48 +57,51 @@ def main_arguments(argv=None):
 
 def get_argument_parser():
     # fmt: off
-    parser = argparse.ArgumentParser(description='Download and parse videos to tagged and normalized MP3 audio files', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('urls', metavar='URL', nargs='+', help='Video URLs, which are passed to youtube-dl for downloading')
-    parser.add_argument('-od', '--output-directory', metavar='DIRECTORY', default='.', help='Custom output directory to place the resulting audio files in')
-    parser.add_argument('-f', '--files', action='store_true', help='Interpret provided URLs as local MP3 files and skip downloading')
-    parser.add_argument('-dd', '--download-directory', metavar='DIRECTORY', default='downloaded', help='Custom output directory to place downloaded MP3 files in (only used when -m/--mp3 is not specified)')
-    parser.add_argument('-k', '--keep', action='store_true', help='Keep original MP3 files instead of overwriting them')
-    parser.add_argument('-s', '--skip', action='store_true', help='Skip processing of unconfident song matches and instead place them in a seperate directory (see: -d/--skipped-directory)')
-    parser.add_argument('-sd', '--skip-directory', metavar='DIRECTORY', default='skipped', help='Custom output directory to place skipped song matches in (only used in conjunction with -s/--skip)')
-    parser.add_argument('-v', '--verbose', action='count', default=0, help='Set the verbosity level of the program')
-    parser.add_argument('-ey', '--extra-youtube-dl', metavar='ARGUMENT', nargs='+', default=[], help='Additional arguments passed for youtube-dl invokation (arguments starting with one or more dashes need to be prepended with a space to circumvent argparse)')
-    parser.add_argument('-ef', '--extra-ffmpeg-normalize', metavar='ARGUMENT', nargs='+', default=[], help='Additional arguments passed for ffmpeg-normalize invokation (arguments starting with one or more dashes need to be prepended with a space to circumvent argparse)')
-    parser.add_argument('-m', '--manual', action='store_true', help='Always query the user for manual corrections even if automatic MP3 tagging finished confidently')
+    parser = argparse.ArgumentParser(description="Download and parse videos to tagged and normalized MP3 audio files", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("urls", metavar="URL", nargs="+", help="Video URLs, which are passed to youtube-dl for downloading")
+    parser.add_argument("-od", "--output-directory", metavar="DIRECTORY", default=".", help="Custom output directory to place the resulting audio files in")
+    parser.add_argument("-f", "--files", action="store_true", help="Interpret provided URLs as local MP3 files and skip downloading")
+    parser.add_argument("-dd", "--download-directory", metavar="DIRECTORY", default="downloaded", help="Custom output directory to place downloaded MP3 files in (only used when -m/--mp3 is not specified)")
+    parser.add_argument("-k", "--keep", action="store_true", help="Keep original MP3 files instead of overwriting them")
+    parser.add_argument("-s", "--skip", action="store_true", help="Skip processing of unconfident song matches and instead place them in a seperate directory (see: -d/--skipped-directory)")
+    parser.add_argument("-sd", "--skip-directory", metavar="DIRECTORY", default="skipped", help="Custom output directory to place skipped song matches in (only used in conjunction with -s/--skip)")
+    parser.add_argument("-v", "--verbose", action="count", default=0, help="Set the verbosity level of the program")
+    parser.add_argument("-ey", "--extra-youtube-dl", metavar="ARGUMENT", nargs="+", default=[], help="Additional arguments passed for youtube-dl invocation (arguments starting with one or more dashes need to be prepended with a space to circumvent argparse)")
+    parser.add_argument("-ef", "--extra-ffmpeg-normalize", metavar="ARGUMENT", nargs="+", default=[], help="Additional arguments passed for ffmpeg-normalize invocation (arguments starting with one or more dashes need to be prepended with a space to circumvent argparse)")
+    parser.add_argument("-es", "--extra-sacad", metavar="ARGUMENT", nargs="+", default=[], help="Additional arguments passed for sacad invocation (arguments starting with one or more dashes need to be prepended with a space to circumvent argparse)")
+    parser.add_argument("-m", "--manual", action="store_true", help="Always query the user for manual corrections even if automatic MP3 tagging finished confidently")
     # fmt: on
     return parser
 
 
 def download_mp3files(urls, download_directory, extra_args):
-    output = io.StringIO()
-    with contextlib.redirect_stdout(output):
-        try:
-            yt_dlp.main(
-                argv=[
-                    "--extract-audio",
-                    "--audio-format",
-                    "mp3",
-                    "--audio-quality",
-                    "0",  # store best audio as mp3
-                    *urls,
-                    "--output",
-                    os.path.join(download_directory, "%(title)s.%(ext)s"),  # set filename to video title
-                ]
-                + [extra_arg.lstrip() for extra_arg in extra_args]
-            )
-        except SystemExit:
-            # prevent youtube_dl's sys.exit call from stopping execution
-            pass
+    process = subprocess.run(
+        [
+            "yt-dlp",
+            "--extract-audio",
+            "--audio-format",
+            "mp3",
+            "--audio-quality",
+            "0",
+            *urls,
+            "--output",
+            os.path.join(download_directory, "%(title)s.%(ext)s"),  # set filename to video title
+            # append extra arguments
+            *(extra_arg.lstrip() for extra_arg in extra_args),
+        ],
+        # create readable unified output to aid debugging
+        stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    if process.returncode != ExitCode.SUCCESS:
+        logger.error(f"subprocess {process.args} failed with exit code {process.returncode}:\n{process.stdout}")
+        sys.exit(ExitCode.FAILURE)
 
-    # extract filename of written mp3 from youtube_dl output
-    lines = output.getvalue().splitlines()
-    mp3lines = filter(lambda line: "Destination" in line and "mp3" in line, lines)
-    mp3files = map(lambda mp3line: mp3line.split(sep=" ", maxsplit=2)[-1], mp3lines)
-    return list(mp3files)
+    # extract filenames of written mp3 files from output
+    lines = process.stdout.splitlines()
+    mp3files = [line.split(sep=" ", maxsplit=2)[-1] for line in lines if "Destination" in line and "mp3" in line]
+    return mp3files
 
 
 def parse_artist(json):
@@ -105,7 +113,7 @@ def parse_artist(json):
     return artist_joined
 
 
-def find_album_release(releases: Iterable) -> Optional[str]:
+def find_album_release(releases: Iterable[Any]) -> Optional[str]:
     for release in releases:
         # ignore compilation and mix albums by checking for secondarytypes
         if "type" in release and release["type"] == "Album" and "secondarytypes" not in release:
@@ -113,7 +121,7 @@ def find_album_release(releases: Iterable) -> Optional[str]:
     return None
 
 
-def find_single_release(releases: Iterable) -> Optional[str]:
+def find_single_release(releases: Iterable[Any]) -> Optional[str]:
     for release in releases:
         # ignore compilation and mix albums by checking for secondarytypes
         if "type" in release and release["type"] == "Single":
@@ -223,67 +231,86 @@ def rename_mp3file(mp3file, song, output_directory, keep_original):
     return new_file
 
 
-def write_mp3tags(mp3file, song):
-    cover_filename = "Cover.jpeg"
-    with main_arguments(
-        argv=[
-            # first argument is always the program name
+def download_cover(artist: str, album: str, filename: str, extra_args: list[str]):
+    COVER_IMAGE_SIZE = 600
+    process = subprocess.run(
+        [
             "sacad",
-            # silence sacad output
             "--verbosity",
             "quiet",
-            # song information
-            song.artist,
-            song.album.removesuffix(" - Single"),
-            # output size, filename and format
-            "600",
-            cover_filename,
-        ]
-    ):
-        sacad_main()
+            artist,
+            album,
+            f"{COVER_IMAGE_SIZE}",
+            filename,
+            # append extra arguments
+            *(extra_arg.lstrip() for extra_arg in extra_args),
+        ],
+        # create readable unified output to aid debugging
+        stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    if process.returncode != ExitCode.SUCCESS:
+        logger.error(f"subprocess {process.args} failed with exit code {process.returncode}:\n{process.stdout}")
+        sys.exit(ExitCode.FAILURE)
 
+
+def add_cover(audio: ID3, song: Song, extra_sacad: list[str]):
+    cover_filename = "Cover.jpeg"
+    download_cover(song.artist, song.album.removesuffix(" - Single"), cover_filename, extra_sacad)
+    if os.path.exists(cover_filename):
+        with open(cover_filename, "rb") as cover:
+            audio.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover.read()))
+        os.remove(cover_filename)
+    else:
+        logger.warning(f"could not get cover art for mp3file: {audio.filename}")
+
+
+def write_mp3tags(mp3file: str, song: Song, extra_sacad: list[str]):
     audio = ID3(mp3file)
     audio.clear()
     audio.add(TPE1(encoding=3, text=song.artist))
     audio.add(TIT2(encoding=3, text=song.title))
     audio.add(TALB(encoding=3, text=song.album))
-    try:
-        with open(cover_filename, "rb") as cover:
-            audio.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover.read()))
-        os.remove(cover_filename)
-    except IOError:
-        logger.warning(f"could not get cover art for mp3file: {mp3file}")
+    add_cover(audio, song, extra_sacad)
     audio.save()
 
 
 def normalize_mp3file(mp3file, extra_args):
-    # pass custom arguments to ffmpeg_normalize's main
-    with main_arguments(
-        argv=[
-            # first argument is always the program name
+    process = subprocess.run(
+        [
             "ffmpeg-normalize",
-            # read and write an mp3file
+            "--quiet",
+            mp3file,
+            # read and write an mp3 file
             "--audio-codec",
             "libmp3lame",
+            # use highest quality
             "--audio-bitrate",
             "320k",
             # perform inplace normalization
-            mp3file,
-            "--force",
             "--output",
             mp3file,
-        ]
-        + [extra_arg.lstrip() for extra_arg in extra_args]
-    ):
-        ffmpeg_normalize_main()
+            "--force",
+            # append extra arguments
+            *(extra_arg.lstrip() for extra_arg in extra_args),
+        ],
+        # create readable unified output to aid debugging
+        stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    if process.returncode != ExitCode.SUCCESS:
+        logger.error(f"subprocess {process.args} failed with exit code {process.returncode}:\n{process.stdout}")
+        sys.exit(ExitCode.FAILURE)
 
 
-def modify_mp3file(mp3file, song, output_directory, keep_original, extra_args):
+def modify_mp3file(mp3file, song, output_directory, keep_original, extra_sacad, extra_ffmpeg):
     mp3file = rename_mp3file(mp3file, song, output_directory, keep_original)
     logger.debug(f"writing mp3tags to mp3file: {song} --> {mp3file}")
-    write_mp3tags(mp3file, song)
+    write_mp3tags(mp3file, song, extra_sacad)
     logger.debug(f"normalizing audio volume of mp3file: {mp3file}")
-    normalize_mp3file(mp3file, extra_args)
+    normalize_mp3file(mp3file, extra_ffmpeg)
     return mp3file
 
 
@@ -312,7 +339,12 @@ def main(arguments=None):
             song = ask_user(mp3file, song)
             logger.debug(f"using user-corrected song attributes: {song}")
         mp3file = modify_mp3file(
-            mp3file, song, arguments.output_directory, arguments.keep, arguments.extra_ffmpeg_normalize
+            mp3file,
+            song,
+            arguments.output_directory,
+            arguments.keep,
+            arguments.extra_sacad,
+            arguments.extra_ffmpeg_normalize,
         )
         logger.info(f"wrote result to mp3file: {mp3file}")
     try:
