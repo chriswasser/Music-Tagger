@@ -2,7 +2,6 @@
 
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from collections import namedtuple
-import contextlib
 import distutils.util
 import enum
 import logging
