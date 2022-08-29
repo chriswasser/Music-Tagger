@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
+
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-from collections import namedtuple
+from dataclasses import dataclass
 import distutils.util
-import enum
+from enum import Enum, IntEnum, auto
 import logging
 import os
 import shutil
@@ -17,20 +19,10 @@ from fuzzywuzzy import fuzz
 from mutagen.id3 import ID3, TPE1, TIT2, TALB, APIC
 
 
-class AlbumType(enum.IntEnum):
-    NONE = 0
-    SINGLE = 50
-    ALBUM = 100
-
-
-class ExitCode(enum.IntEnum):
+class ExitCode(IntEnum):
     SUCCESS = 0
     FAILURE = 1
 
-
-Song = namedtuple(typename="Song", field_names=["artist", "title", "album"])
-Score = namedtuple(typename="Score", field_names=["audio", "filename", "release"])
-Match = namedtuple(typename="Match", field_names=["song", "score"])
 
 load_dotenv()
 ACOUSTID_APPLICATION_API_KEY = os.getenv("ACOUSTID_APPLICATION_API_KEY")
@@ -49,7 +41,7 @@ def get_argument_parser() -> ArgumentParser:
     # fmt: off
     parser = ArgumentParser(description="Download and parse videos to tagged and normalized MP3 audio files", formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument("urls", metavar="URL", nargs="+", help="Video URLs, which are passed to youtube-dl for downloading")
-    parser.add_argument("-od", "--output-directory", metavar="DIRECTORY", default=".", help="Custom output directory to place the resulting audio files in")
+    parser.add_argument("-od", "--output-directory", metavar="DIRECTORY", default="finished", help="Custom output directory to place the resulting audio files in")
     parser.add_argument("-f", "--files", action="store_true", help="Interpret provided URLs as local MP3 files and skip downloading")
     parser.add_argument("-dd", "--download-directory", metavar="DIRECTORY", default="downloaded", help="Custom output directory to place downloaded MP3 files in (only used when -m/--mp3 is not specified)")
     parser.add_argument("-k", "--keep", action="store_true", help="Keep original MP3 files instead of overwriting them")
@@ -103,62 +95,145 @@ def parse_artist(artists: Iterable[Any]) -> str:
     return artist_joined
 
 
-def find_album_release(releases: Iterable[Any]) -> Optional[str]:
+class AcoustidReleaseType(Enum):
+    SINGLE = auto()
+    ALBUM = auto()
+    OTHER = auto()
+
+    @staticmethod
+    def get(key: str, default: AcoustidReleaseType) -> AcoustidReleaseType:
+        try:
+            return AcoustidReleaseType[key]
+        except KeyError:
+            return default
+
+
+class ReleaseTypeScore(IntEnum):
+    ALBUM = 10
+    SINGLE = 5
+    OTHER = 0
+
+
+def parse_types(type: str, secondarytypes: list[str]) -> list[AcoustidReleaseType]:
+    return [AcoustidReleaseType.get(type.upper(), AcoustidReleaseType.OTHER)] + [
+        AcoustidReleaseType.get(secondarytype.upper(), AcoustidReleaseType.OTHER) for secondarytype in secondarytypes
+    ]
+
+
+@dataclass
+class AcoustidRelease:
+    artist: str
+    title: str
+    types: list[AcoustidReleaseType]
+
+    @classmethod
+    def from_json(cls, json: dict[str, Any]) -> AcoustidRelease:
+        return cls(
+            artist=parse_artist(json.get("artists", [])),
+            title=json.get("title", ""),
+            types=parse_types(json.get("type", ""), json.get("secondarytypes", [])),
+        )
+
+
+@dataclass
+class AcoustidRecording:
+    artist: str
+    title: str
+    releases: list[AcoustidRelease]
+
+    @classmethod
+    def from_json(cls, json: dict[str, Any]) -> AcoustidRecording:
+        return cls(
+            artist=parse_artist(json.get("artists", [])),
+            title=json.get("title", ""),
+            releases=[AcoustidRelease.from_json(release) for release in json.get("releasegroups", [])],
+        )
+
+
+@dataclass
+class AcoustidResult:
+    score: float
+    recordings: list[AcoustidRecording]
+
+    @classmethod
+    def from_json(cls, json: dict[str, Any]) -> AcoustidResult:
+        return cls(
+            score=json.get("score", 0.0),
+            recordings=[AcoustidRecording.from_json(recording) for recording in json.get("recordings", [])],
+        )
+
+
+@dataclass
+class Score:
+    audio: float
+    file: int
+    type: ReleaseTypeScore
+
+
+@dataclass
+class Song:
+    artist: str
+    title: str
+    album: str
+
+
+@dataclass
+class Match:
+    song: Song
+    score: Score
+
+    def is_confident(self) -> bool:
+        return self.score.audio >= 0.40 and self.score.file >= 70 and self.score.type >= ReleaseTypeScore.SINGLE
+
+
+def find_album(releases: list[AcoustidRelease]) -> Optional[AcoustidRelease]:
     for release in releases:
-        # ignore compilation and mix albums by checking for secondarytypes
-        if "type" in release and release["type"] == "Album" and "secondarytypes" not in release:
-            return release["title"]
+        if len(release.types) == 1 and release.types[0] == AcoustidReleaseType.ALBUM:
+            return release
     return None
 
 
-def find_single_release(releases: Iterable[Any]) -> Optional[str]:
+def find_single(releases: list[AcoustidRelease]) -> Optional[AcoustidRelease]:
     for release in releases:
-        # ignore compilation and mix albums by checking for secondarytypes
-        if "type" in release and release["type"] == "Single":
-            return f"{release['title']} - Single"
+        if len(release.types) == 1 and release.types[0] == AcoustidReleaseType.SINGLE:
+            return release
     return None
+
+
+def find_best_match(results: list[AcoustidResult], mp3basename: str) -> Match:
+    matches = [Match(Song("", "", ""), Score(0.0, 0, ReleaseTypeScore.OTHER))]
+    for result in results:
+        for recording in result.recordings:
+            file_score = score_recording_for_file(recording, mp3basename)
+
+            release = (
+                find_album(recording.releases)
+                or find_single(recording.releases)
+                or AcoustidRelease("", f"{recording.title} - Single", [AcoustidReleaseType.OTHER])
+            )
+
+            song = Song(recording.artist, recording.title, release.title)
+            score = Score(
+                audio=result.score,
+                file=file_score,
+                type=ReleaseTypeScore[release.types[0].name],
+            )
+            matches.append(Match(song=song, score=score))
+
+    return max(matches, key=lambda match: match.score.file * 1000 + match.score.type)
+
+
+def score_recording_for_file(recording: AcoustidRecording, basename: str) -> int:
+    return fuzz.token_set_ratio(f"{recording.artist} - {recording.title}", basename)
 
 
 def fingerprint_mp3file(mp3file):
     response: Any = acoustid.match(ACOUSTID_APPLICATION_API_KEY, mp3file, parse=False, meta="recordings releasegroups")
-    mp3name = os.path.basename(os.path.abspath(mp3file))
-
-    matches = [Match(Song("", "", ""), Score(0, 0, 0))]
-    for result in response["results"]:
-        audio_score = result["score"] * 100
-
-        if "recordings" not in result:
-            continue
-        for recording in result["recordings"]:
-            if "artists" not in recording:
-                continue
-            artist = parse_artist(recording["artists"])
-
-            if "title" not in recording:
-                continue
-            title = recording["title"]
-
-            filename_score = fuzz.token_set_ratio(mp3name, f"{artist} - {title}")
-
-            if "releasegroups" not in recording:
-                continue
-
-            if release := find_album_release(recording["releasegroups"]):
-                release_score = AlbumType.ALBUM
-            elif release := find_single_release(recording["releasegroups"]):
-                release_score = AlbumType.SINGLE
-            else:
-                # suggest single release but do not mark as single match to ask user for confirmation
-                release = f"{title} - Single"
-                release_score = AlbumType.NONE
-
-            song = Song(artist, title, release)
-            score = Score(audio_score, filename_score, release_score)
-            matches.append(Match(song, score))
-
-    song, score = max(matches, key=lambda match: match.score.filename * 1000 + match.score.release)
-    confident = score.audio >= 40 and score.filename >= 70 and score.release > AlbumType.NONE
-    return song, confident
+    results = [AcoustidResult.from_json(result) for result in response["results"]]
+    results = [result for result in results if len(result.recordings) > 0]
+    match = find_best_match(results, os.path.basename(mp3file))
+    print(mp3file, match)
+    return match.song, match.is_confident()
 
 
 def bool_input(prompt: str) -> bool:
@@ -305,17 +380,22 @@ def modify_mp3file(mp3file, song, output_directory, keep_original, extra_sacad, 
 def main(arguments=None):
     arguments = get_argument_parser().parse_args(args=arguments)
     logger.setLevel(logging.WARNING - arguments.verbose * 10)
+
     logger.debug(f"received the following arguments: {arguments}")
+
     mp3files = (
-        download_mp3files(arguments.urls, arguments.download_directory, arguments.extra_youtube_dl)
-        if not arguments.files
-        else arguments.urls
+        arguments.urls
+        if arguments.files
+        else download_mp3files(arguments.urls, arguments.download_directory, arguments.extra_youtube_dl)
     )
     logger.debug(f"all mp3files to process: {mp3files}")
+
     for mp3file in mp3files:
         logger.info(f"start processing mp3file: {mp3file}")
+
         song, confident = fingerprint_mp3file(mp3file)
         logger.debug(f"fingerprinting finished with result: {song}")
+
         if not confident or arguments.manual:
             logger.debug(f"low confidence for the correctness of the fingerprinting result")
             if arguments.skip:
@@ -323,9 +403,10 @@ def main(arguments=None):
                 new_file = os.path.join(arguments.skip_directory, os.path.basename(mp3file))
                 copy_or_move(mp3file, new_file, arguments.keep)
                 logger.info(f"skipped processing of song and place mp3file in: {new_file}")
-                continue
-            song = ask_user(mp3file, song)
-            logger.debug(f"using user-corrected song attributes: {song}")
+            else:
+                song = ask_user(mp3file, song)
+                logger.debug(f"using user-corrected song attributes: {song}")
+
         mp3file = modify_mp3file(
             mp3file,
             song,
@@ -335,6 +416,7 @@ def main(arguments=None):
             arguments.extra_ffmpeg_normalize,
         )
         logger.info(f"wrote result to mp3file: {mp3file}")
+
     try:
         os.rmdir(arguments.download_directory)
     except (FileNotFoundError, OSError):
