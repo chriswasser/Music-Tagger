@@ -232,7 +232,6 @@ def fingerprint_mp3file(mp3file):
     results = [AcoustidResult.from_json(result) for result in response["results"]]
     results = [result for result in results if len(result.recordings) > 0]
     match = find_best_match(results, os.path.basename(mp3file))
-    print(mp3file, match)
     return match.song, match.is_confident()
 
 
